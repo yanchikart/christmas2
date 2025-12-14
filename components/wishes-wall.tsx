@@ -4,16 +4,17 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
+import { supabase } from '@/lib/supabase'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Volume2, VolumeX, Sparkles, Gift, Star } from "lucide-react"
 
 interface Wish {
-  id: string
-  name: string
+  id: number
+  name: string | null
   message: string
-  timestamp: number
+  created_at: string
 }
 
 export default function WishesWall() {
@@ -24,12 +25,29 @@ export default function WishesWall() {
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null)
 
   // Load wishes from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem("newYearWishes")
-    if (stored) {
-      setWishes(JSON.parse(stored))
-    }
-  }, [])
+ useEffect(() => {
+  // Начальная загрузка
+  const loadWishes = async () => {
+    const { data } = await supabase
+      .from('wishes')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setWishes(data || [])
+  }
+  loadWishes()
+
+  // Реалтайм — новые пожелания появляются у всех автоматически
+  const channel = supabase
+    .channel('wishes')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wishes' }, (payload) => {
+      setWishes((prev) => [payload.new as Wish, ...prev])
+    })
+    .subscribe()
+
+   return () => {
+    supabase.removeChannel(channel).catch(console.error)
+  }
+}, [])
 
   // Initialize audio
   useEffect(() => {
@@ -58,26 +76,24 @@ export default function WishesWall() {
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault()
+  if (!message.trim()) return
 
-    if (!message.trim()) return
+  const { error } = await supabase
+    .from('wishes')
+    .insert({ 
+      name: name.trim() || null, 
+      message: message.trim() 
+    })
 
-    const newWish: Wish = {
-      id: Date.now().toString(),
-      name: name.trim() || "",
-      message: message.trim(),
-      timestamp: Date.now(),
-    }
-
-    const updatedWishes = [newWish, ...wishes]
-    setWishes(updatedWishes)
-    localStorage.setItem("newYearWishes", JSON.stringify(updatedWishes))
-
-    // Reset form
-    setName("")
-    setMessage("")
+  if (error) {
+    alert('Ошибка: ' + error.message)
+  } else {
+    setName('')
+    setMessage('')
   }
+}
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-background">
@@ -260,12 +276,12 @@ export default function WishesWall() {
                     </div>
                     <p className="text-foreground/90 leading-relaxed text-pretty">{wish.message}</p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(wish.timestamp).toLocaleDateString("ru-RU", {
-                        day: "numeric",
-                        month: "long",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                       {new Date(wish.created_at).toLocaleDateString("ru-RU", {
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+})}
                     </p>
                   </div>
                 </Card>
